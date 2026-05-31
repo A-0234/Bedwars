@@ -4172,9 +4172,7 @@ class BedwarsMode {
                             if (this.map.locationInSafeArea(placingLocation)) continue;
                             lib.DimensionUtil.replaceBlock(bridgeEgg.dimension.id, placingLocation, placingLocation, ["minecraft:air"], `bedwars:${team.id}_wool`);
                         }
-                            if (this.map.locationInSafeArea(placingLocation)) continue; // 不放置在安全区
-                            lib.DimensionUtil.replaceBlock(bridgeEgg.dimension.id, placingLocation, placingLocation, ["minecraft:air"], `bedwars:${team.id}_wool`);
-                        }
+                            
                         lib.PlayerUtil.getAll().forEach(player => player.playSound("random.pop", { location: bridgeEgg.location }));
                     });
                 },
