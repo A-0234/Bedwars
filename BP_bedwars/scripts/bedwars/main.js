@@ -2697,7 +2697,23 @@ class BedwarsMode {
                         else if (event.entity.typeId == "bedwars:bed_bug") this.eventBedBugHit();
                         else if (event.entity.typeId == "bedwars:bridge_egg") this.timelineBridgeEggCreateBridge();
                         else if (event.entity.typeId == "minecraft:arrow") this.eventArrowHitEntity();
-                        else if (event.entity.typeId == "minecraft:ender_pearl") this.timelineRemoveEnderPearl();
+                                                else if (event.entity.typeId == "minecraft:ender_pearl") {
+                            this.timelineRemoveEnderPearl();
+                            this.eventEnderPearlNoDamage();
+                            try {
+                                const thrower = event.entity.getComponent("minecraft:projectile")?.owner;
+                                if (thrower) {
+                                    if (thrower.startItemCooldown) {
+                                        thrower.startItemCooldown("ender_pearl", 0);
+                                        thrower.startItemCooldown("chorus_fruit", 0);
+                                    }
+                                    if (this.map?.getPlayerData) {
+                                        const td = this.map.getPlayerData(thrower);
+                                        if (td) td.enderPearlImmuneUntilTick = (minecraft.system.currentTick || 0) + 100;
+                                    }
+                                }
+                            } catch (e) { }
+                        }
                     },
                 },
                 // 在某些实体移除后，触发对应事件或时间线
@@ -2709,7 +2725,7 @@ class BedwarsMode {
                         else if (event.typeId == "bedwars:bed_bug" && lib.EntityUtil.get("bedwars:bed_bug").length == 0) this.system.unsubscribeEvent("bedBugHit");
                         else if (event.typeId == "bedwars:bridge_egg" && lib.EntityUtil.get("bedwars:bridge_egg").length == 0) this.system.unsubscribeTimeline("bridgeEggCreateBridge");
                         else if (event.typeId == "minecraft:arrow" && lib.EntityUtil.get("minecraft:arrow").length == 0) this.system.unsubscribeEvent("arrowHitEntity");
-                        else if (event.typeId == "minecraft:ender_pearl" && lib.EntityUtil.get("minecraft:ender_pearl").length == 0) this.system.unsubscribeTimeline("removeEnderPearl");
+                                                else if (event.typeId == "minecraft:ender_pearl" && lib.EntityUtil.get("minecraft:ender_pearl").length == 0) { this.system.unsubscribeTimeline("removeEnderPearl"); this.system.unsubscribeEvent("enderPearlNoDamage"); }
                     },
                 }
             ],
@@ -3505,6 +3521,12 @@ class BedwarsMode {
                             "bedwars:brown_stained_hardened_clay",
                             "bedwars:orange_stained_hardened_clay"
                         ];
+                                                // 火焰蛋无法炸开末地石（Hypixel 行为）
+                        const isFireball = event.source?.typeId === "bedwars:fireball";
+                        if (isFireball) {
+                            const impacted = event.getImpactedBlocks().filter(block => block.typeId !== "bedwars:end_stone");
+                            event.setImpactedBlocks(impacted);
+                        }
                         const dropBlocks = event.getImpactedBlocks().filter(block => {
                             // 如果是 TNT 炸毁的方块，且 TNT 完全掉落开关已打开，则设置为 100% 的掉落，否则为 33% 的掉落
                             if (!minecraft.world.gameRules.tntExplosionDropDecay && event.source.typeId === "minecraft:tnt") return lootBlocks.includes(block.typeId);
@@ -3832,6 +3854,25 @@ class BedwarsMode {
                         if (event.projectile.typeId == "bedwars:fireball") playerHurtByFireball(event);
                     },
                 },
+                // 火焰蛋可被击回（Hypixel 行为）
+                {
+                    type: minecraft.world.afterEvents.entityHitEntity,
+                    /** @type {function(minecraft.EntityHitEntityAfterEvent): void} */
+                    callback: event => {
+                        const fireball = event.hitEntity;
+                        if (!fireball || fireball.typeId != "bedwars:fireball") return;
+                        const damager = event.damagingEntity;
+                        if (!damager || damager.typeId != "minecraft:player") return;
+                        try {
+                            const view = damager.getViewDirection();
+                            const power = 1.8;
+                            fireball.clearVelocity();
+                            fireball.applyImpulse({ x: view.x * power, y: view.y * power, z: view.z * power });
+                            const projComp = fireball.getComponent("minecraft:projectile");
+                            if (projComp) projComp.owner = damager;
+                        } catch (e) { }
+                    },
+                },
             ],
         });
     };
@@ -4020,9 +4061,38 @@ class BedwarsMode {
                         if (ironGolem.killTimer >= 240) ironGolem.kill();
                     });
                     // 若之后不再存在任何床虱，销毁时间线
-                    if (ironGolems.length == 0) this.system.unsubscribeTimeline("dreamDefenderCountdown");
+                                        if (ironGolems.length == 0) this.system.unsubscribeTimeline("dreamDefenderCountdown");
                 },
                 tickInterval: 20,
+            },
+        });
+
+        // 铁傀儡快速重新锁定目标（Hypixel 行为）
+        this.system.subscribeTimeline({
+            typeId: "dreamDefenderRetarget",
+            interval: {
+                callback: () => {
+                    const ironGolems = lib.EntityUtil.get("bedwars:iron_golem").filter(g => g.team && g.killTimer != undefined);
+                    if (ironGolems.length == 0) { this.system.unsubscribeTimeline("dreamDefenderRetarget"); return; }
+                    ironGolems.forEach(ironGolem => {
+                        const team = ironGolem.team;
+                        const candidates = lib.PlayerUtil.getNearby(ironGolem.location, 16).filter(p => {
+                            const pd = this.map.getPlayerData(p);
+                            if (!pd || !pd.team) return false;
+                            if (pd.team.id == team.id) return false;
+                            if (p.getGameMode() == minecraft.GameMode.Spectator) return false;
+                            if (pd.isEliminated || pd.respawnTime > 0) return false;
+                            return true;
+                        });
+                        if (candidates.length == 0) return;
+                        candidates.sort((a, b) => lib.Vector3Util.distance(a.location, ironGolem.location) - lib.Vector3Util.distance(b.location, ironGolem.location));
+                        const nearest = candidates[0];
+                        try {
+                            ironGolem.applyDamage(0.01, { cause: minecraft.EntityDamageCause.entityAttack, damagingEntity: nearest });
+                        } catch (e) { }
+                    });
+                },
+                tickInterval: 5,
             },
         });
     };
