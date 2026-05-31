@@ -4165,10 +4165,13 @@ class BedwarsMode {
                         const outOfBorder = this.map.projectileOutOfBorder(bridgeEgg, -5);
                         if (outOfBorder) return;
                         // 检查完毕，每游戏刻创建一个桥面，并播放音效
-                        for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
+                        // Hypixel 行为：2 格宽、无缝隙
+                        for (let x = 0; x <= 1; x++) for (let z = 0; z <= 1; z++) {
                             const placingLocation = lib.Vector3Util.add(bridgeEgg.location, x, -2, z);
-                            if (placingLocation.y < this.map.heightLimitMin) continue; // 不放置在最低限度之下
-                            if (Math.random() > 0.60) continue; // 按照 60% 的完整度放置
+                            if (placingLocation.y < this.map.heightLimitMin) continue;
+                            if (this.map.locationInSafeArea(placingLocation)) continue;
+                            lib.DimensionUtil.replaceBlock(bridgeEgg.dimension.id, placingLocation, placingLocation, ["minecraft:air"], `bedwars:${team.id}_wool`);
+                        }
                             if (this.map.locationInSafeArea(placingLocation)) continue; // 不放置在安全区
                             lib.DimensionUtil.replaceBlock(bridgeEgg.dimension.id, placingLocation, placingLocation, ["minecraft:air"], `bedwars:${team.id}_wool`);
                         }
